@@ -7,6 +7,108 @@ import glob
 from scipy import io
 
 
+def matfile_dataPipeline(num_subbatch_input, dir, training_mode):
+
+    mat_path = os.path.join(dir,"data*.mat")
+    mat_path = np.asarray(mat_path)
+
+    mat_cProj_path = os.path.join(dir,"data*.mat")
+    mat_cProj_path = np.asarray(mat_cProj_path)
+
+    ### contruct training data pipeline
+    #import ipdb; ipdb.set_trace()
+    train_data = mat_construct_inputPipeline(mat_path, mat_cProj_path, flag_shuffle=False, batch_size=num_subbatch_input)
+
+    # define re-initialisable iterator
+    iterator = tf.data.Iterator.from_structure(train_data.output_types, train_data.output_shapes)
+    next_element = iterator.get_next()
+
+    # define initialisation for each iterator
+    trainData_init_op = iterator.make_initializer(train_data)
+
+    return next_element, trainData_init_op, len(train_items)
+
+def mat_construct_inputPipeline(items, cProj_items, batch_size, flag_shuffle=True):
+    data = tf.data.Dataset.from_tensor_slices((items, cProj_items))
+    if flag_shuffle:
+        data = data.apply(tf.contrib.data.shuffle_and_repeat(buffer_size=100000))
+    else:
+        data = data.repeat()
+
+    # import ipdb; ipdb.set_trace()
+    data = data.apply(tf.contrib.data.parallel_interleave(mat_read_func, cycle_length=batch_size, block_length=1, sloppy=False ))
+    data = data.map(mat_preprocess_func, num_parallel_calls=8 )
+    data = data.batch(batch_size).prefetch(4)
+
+    return data
+
+def mat_read_func(filename, cProj_filename):
+
+    input, dm, nm, cam, scaleX, scaleY, mask = tf.py_func(
+        _read_mat_function,
+        [filename],
+        [
+            tf.float32,
+            tf.float32,
+            tf.float32,
+            tf.float32,
+            tf.float32,
+            tf.float32,
+            tf.float32,
+        ],
+    )
+    reproj_inputs, reproj_mask = tf.py_func(
+        _read_mat_function_cProj, [cProj_filename], [tf.float32, tf.float32]
+    )
+
+    input = tf.data.Dataset.from_tensor_slices(input[None])
+    dm = tf.data.Dataset.from_tensor_slices(dm[None])
+    nm = tf.data.Dataset.from_tensor_slices(nm[None])
+    cam = tf.data.Dataset.from_tensor_slices(cam[None])
+    scaleX = tf.data.Dataset.from_tensor_slices(scaleX[None])
+    scaleY = tf.data.Dataset.from_tensor_slices(scaleY[None])
+    mask = tf.data.Dataset.from_tensor_slices(mask[None])
+    reproj_inputs = tf.data.Dataset.from_tensor_slices(reproj_inputs[None])
+    reproj_mask = tf.data.Dataset.from_tensor_slices(reproj_mask[None])
+
+    return tf.data.Dataset.zip(
+        (input, dm, nm, cam, scaleX, scaleY, mask, reproj_inputs, reproj_mask)
+    )
+
+def _read_mat_function(filename):
+    import ipdb; ipdb.set_trace()
+    batch_data = scipy.io.loadmat(filename)
+    input = np.float32(batch_data["input"])
+    dm = batch_data["dm"]
+    nm = np.float32(batch_data["nm"])
+    cam = np.float32(batch_data["cam"])
+    scaleX = batch_data["scaleX"]
+    scaleY = batch_data["scaleY"]
+    mask = np.float32(batch_data["mask"])
+
+    return input, dm, nm, cam, scaleX, scaleY, mask
+
+def _read_mat_function_cProj(filename):
+    batch_data = scipy.io.loadmat(filename)
+    input = np.float32(batch_data["reproj_im1"])
+    mask = np.float32(batch_data["reproj_mask"])
+
+    return input, mask
+
+def mat_preprocess_func(
+    input, dm, nm, cam, scaleX, scaleY, mask, reproj_inputs, reproj_mask
+    ):
+    
+    input = input / 255
+    input = input * 2 - 1
+
+    nm = nm / 127
+
+    reproj_inputs = reproj_inputs / 255
+    reproj_inputs = reproj_inputs * 2 - 1
+
+    return input, dm, nm, cam, scaleX, scaleY, mask, reproj_inputs, reproj_mask
+
 def bigTime_dataPipeline(num_subbatch_input, dir):
     img_batch = pk.load(open(os.path.join(dir + "BigTime_v1", "img_batch.p"), "rb"))
 

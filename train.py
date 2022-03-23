@@ -128,7 +128,6 @@ def main():
     iters = 500
     num_subbatch = num_subbatch_input
     num_iters = np.int32(np.ceil(num_train_batches / num_subbatch))
-    num_test_iters = np.int32(np.ceil(num_test_batches / num_subbatch))
 
     # define variable list for each of training
     g_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope="inverserendernet")
